@@ -1,3 +1,5 @@
+#![cfg_attr(not(feature = "std"), no_std)]
+#![cfg_attr(not(feature = "std"), feature(alloc))]
 #![allow(unused_imports)]
 
 extern crate byteorder;
@@ -7,16 +9,30 @@ extern crate rand;
 #[macro_use]
 extern crate ff_derive;
 
+#[cfg(not(feature = "std"))]
+#[macro_use]
+extern crate alloc;
+
 #[cfg(feature = "derive")]
 pub use ff_derive::*;
 
-use std::error::Error;
-use std::fmt;
-use std::io::{self, Read, Write};
+pub mod io;
+
+#[cfg(not(feature = "std"))]
+mod std {
+	pub use core::*;
+	pub use alloc::vec;
+	pub use alloc::string;
+	pub use alloc::boxed;
+	pub use alloc::borrow;
+}
+
+use std::string::String;
+use byteorder::ByteOrder;
 
 /// This trait represents an element of a field.
 pub trait Field:
-    Sized + Eq + Copy + Clone + Send + Sync + fmt::Debug + fmt::Display + 'static + rand::Rand
+    Sized + Eq + Copy + Clone + Send + Sync + 'static + rand::Rand
 {
     /// Returns the zero element of the field, the additive identity.
     fn zero() -> Self;
@@ -97,8 +113,6 @@ pub trait PrimeFieldRepr:
     + Send
     + Sync
     + Default
-    + fmt::Debug
-    + fmt::Display
     + 'static
     + rand::Rand
     + AsRef<[u64]>
@@ -139,44 +153,52 @@ pub trait PrimeFieldRepr:
     fn shl(&mut self, amt: u32);
 
     /// Writes this `PrimeFieldRepr` as a big endian integer.
-    fn write_be<W: Write>(&self, mut writer: W) -> io::Result<()> {
-        use byteorder::{BigEndian, WriteBytesExt};
+    fn write_be<W: io::Write>(&self, writer: &mut W) -> io::Result<()> {
+        use byteorder::BigEndian;
 
-        for digit in self.as_ref().iter().rev() {
-            writer.write_u64::<BigEndian>(*digit)?;
-        }
+		let mut buf = [0u8; 8];
+		for digit in self.as_ref().iter().rev() {
+			BigEndian::write_u64(&mut buf, *digit);
+			writer.write(&buf)?;
+		}
 
         Ok(())
     }
 
     /// Reads a big endian integer into this representation.
-    fn read_be<R: Read>(&mut self, mut reader: R) -> io::Result<()> {
-        use byteorder::{BigEndian, ReadBytesExt};
+    fn read_be<R: io::Read>(&mut self, reader: &mut R) -> io::Result<()> {
+        use byteorder::BigEndian;
 
+		let mut buf = [0u8; 8];
         for digit in self.as_mut().iter_mut().rev() {
-            *digit = reader.read_u64::<BigEndian>()?;
+			reader.read(&mut buf)?;
+			*digit = BigEndian::read_u64(&buf);
         }
 
         Ok(())
     }
 
     /// Writes this `PrimeFieldRepr` as a little endian integer.
-    fn write_le<W: Write>(&self, mut writer: W) -> io::Result<()> {
-        use byteorder::{LittleEndian, WriteBytesExt};
+    fn write_le<W: io::Write>(&self, mut writer: W) -> io::Result<()> {
+        use byteorder::LittleEndian;
 
-        for digit in self.as_ref().iter() {
-            writer.write_u64::<LittleEndian>(*digit)?;
-        }
+		let mut buf = [0u8; 8];
+		for digit in self.as_ref().iter().rev() {
+			LittleEndian::write_u64(&mut buf, *digit);
+			writer.write(&buf)?;
+		}
 
         Ok(())
     }
 
     /// Reads a little endian integer into this representation.
-    fn read_le<R: Read>(&mut self, mut reader: R) -> io::Result<()> {
-        use byteorder::{LittleEndian, ReadBytesExt};
+    fn read_le<R: io::Read>(&mut self, mut reader: R) -> io::Result<()> {
+        use byteorder::LittleEndian;
 
-        for digit in self.as_mut().iter_mut() {
-            *digit = reader.read_u64::<LittleEndian>()?;
+		let mut buf = [0u8; 8];
+        for digit in self.as_mut().iter_mut().rev() {
+			reader.read(&mut buf)?;
+			*digit = LittleEndian::read_u64(&buf);
         }
 
         Ok(())
@@ -196,24 +218,6 @@ pub enum LegendreSymbol {
 pub enum PrimeFieldDecodingError {
     /// The encoded value is not in the field
     NotInField(String),
-}
-
-impl Error for PrimeFieldDecodingError {
-    fn description(&self) -> &str {
-        match *self {
-            PrimeFieldDecodingError::NotInField(..) => "not an element of the field",
-        }
-    }
-}
-
-impl fmt::Display for PrimeFieldDecodingError {
-    fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
-        match *self {
-            PrimeFieldDecodingError::NotInField(ref repr) => {
-                write!(f, "{} is not an element of the field", repr)
-            }
-        }
-    }
 }
 
 /// This represents an element of a prime field.
